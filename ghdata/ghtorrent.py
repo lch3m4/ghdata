@@ -1,27 +1,23 @@
 #SPDX-License-Identifier: MIT
-
-import sqlalchemy as s
 import pandas as pd
-import requests
-import sys
-if (sys.version_info > (3, 0)):
-    import urllib.parse as url
-else:
-    import urllib as url
-import json
+import sqlalchemy as s
 import re
 
-class GHData(object):
+class GHTorrent(object):
     """Uses GHTorrent and other GitHub data sources and returns dataframes with interesting GitHub indicators"""
 
-    def __init__(self, dbstr, public_www_api_key=None):
+    def __init__(self, dbstr):
         """
         Connect to GHTorrent
 
         :param dbstr: The [database string](http://docs.sqlalchemy.org/en/latest/core/engines.html) to connect to the GHTorrent database
         """
+        self.DB_STR = dbstr
         self.db = s.create_engine(dbstr)
-        self.PUBLIC_WWW_API_KEY = public_www_api_key
+        try:
+            self.userid('howderek')
+        except Exception as e:
+            print("Could not connect to database.\nError: " + str(e))
 
     def __single_table_count_by_date(self, table, repo_col='project_id'):
         """
@@ -305,28 +301,6 @@ class GHData(object):
         """)
         return pd.read_sql(issuesSQL, self.db, params={"repoid": str(repoid)})
 
-    def linking_websites(self, repoid):
-        """
-        Finds the repo's popularity on the internet
-
-        :param repoid: The id of the project in the projects table.
-        :return: DataFrame with the issues' id the date it was
-                 opened, and the date it was first responded to
-        """
-
-        # Get the url of the repo
-        repo_url_query = s.sql.text('SELECT projects.url FROM projects WHERE projects.id = :repoid')
-        repo_url = ''
-        result = self.db.execute(repo_url_query, repoid=repoid)
-        for row in result:
-            repo_url = row[0]
-
-        # Find websites that link to that repo
-        query = '<a+href%3D"{repourl}"'.format(repourl=url.quote_plus(repo_url.replace('api.', '').replace('repos/', '')))
-        r = 'https://publicwww.com/websites/{query}/?export=csv&apikey={apikey}'.format(query=query, apikey=self.PUBLIC_WWW_API_KEY)
-        result =  pd.read_csv(r, delimiter=';', header=None, names=['url', 'rank'])
-        return result
-
     def pull_acceptance_rate(self, repoid):
         """
         Timeseries of pull request acceptance rate (Number of pull requests merged on a date over Number of pull requests opened on a date)
@@ -355,3 +329,38 @@ class GHData(object):
         """)
 
         return pd.read_sql(pullAcceptanceSQL, self.db, params={"repoid": str(repoid)})
+
+    def classify_contributors(self, repoid):
+        """
+        Classify everyone who has interacted with a repo into
+          - user
+          - tester
+          - rejected_contributor
+          - contributor
+          - major_contributor
+          - maintainer
+
+        :param repoid: The id of the project in the projects table.
+        :return: DataFrame with the login and role of contributors
+        """
+        contributors = self.contributors(repoid)
+        sums = contributors.sum()
+
+        def classify(row):
+            role = 'user'
+            ratio = row / sums
+            if (ratio['issue_comments'] > 0.05):
+                role = 'tester'
+            if (row['pull_requests'] >= 1 and row['commits'] == 0):
+                role = 'rejected_contributor'
+            if (row['pull_requests'] >= 1 and row['commits'] >= 1):
+                role = 'contributor'
+            if (ratio['pull_requests'] > 0.10 or ratio['commits'] > 0.01):
+                role = 'major_contributor'
+            if (ratio['commits'] > 0.02 or ratio['pull_request_comments'] > 0.15):
+                role = 'maintainer'
+
+            return pd.Series({'login': row['login'], 'role': role})
+
+        roles = contributors.apply(classify, axis=1)
+        return roles

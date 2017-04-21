@@ -6,6 +6,7 @@
 *.exe
 *.o
 *.so
+*.pyc
 *.egg-info
 .vscode
 
@@ -29,6 +30,7 @@
 *.sqlite
 *.ini
 *.cfg
+*.cfg.old
 
 # OS generated files #
 ######################
@@ -39,3 +41,10 @@
 .Trashes
 ehthumbs.db
 Thumbs.db
+*.cache
+*.pyc
+
+# Python junk #
+###############
+__pycache__
+_pycache_
